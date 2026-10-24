@@ -3,7 +3,7 @@
 // icon-color: deep-purple; icon-glyph: user-secret;
 // ============================================================
 //  UNDERCOVER — Script Scriptable complet (Façon Raccourcis)
-//  Version : 1.0
+//  Version : 1.1
 //  Auteur : ~WolfGang_PRoxa~
 //  Description : Un script pour gérer vos parties d'Undercover, avec tirage de rôles, envoi de SMS, et suivi des scores.
 //  Fonctionnalités : Déroulement de partie, conditions de 
@@ -21,7 +21,7 @@ const LISTS_FOLDER  = "lists";
 const FILE_PLAYERS  = "players.json";
 const FILE_CONFIG   = "config.json";
 const LOGS_FOLDER   = "logs";
-const APP_VERSION   = "1.0";
+const APP_VERSION   = "1.1";
 const LANG          = "fr";
 const REPO_RAW_URL  = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main";
 const EMBEDDED_KEY  = "__embarquee";

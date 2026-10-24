@@ -3,7 +3,7 @@
 // icon-color: deep-purple; icon-glyph: user-secret;
 // ============================================================
 //  UNDERCOVER — Scriptable Script (Shortcut-like)
-//  Version: 1.0
+//  Version: 1.1
 //  Author: ~WolfGang_PRoxa~
 //  Description: A script to manage your Undercover games, with role assignment, SMS sending, and score tracking.
 //  Features: Game flow, victory conditions, 
@@ -21,7 +21,7 @@ const LISTS_FOLDER  = "lists";
 const FILE_PLAYERS  = "players.json";
 const FILE_CONFIG   = "config.json";
 const LOGS_FOLDER   = "logs";
-const APP_VERSION   = "1.0";
+const APP_VERSION   = "1.1";
 const LANG          = "en";
 const REPO_RAW_URL  = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main";
 const EMBEDDED_KEY  = "__embedded";

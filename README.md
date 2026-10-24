@@ -28,7 +28,7 @@ The application state is maintained in two distinct objects.
 #### 2.1. `sessionConfig` (Persistent)
 Manages global preferences that apply from one session to the next:
 - `showRoleInMessage` / `showPseudoInMessage`: Allows including or excluding explicit information in the SMS distributed to players.
-- `activeListName`: Determines the JSON word list currently used (or `null` for the built-in list).
+- `activeListName`: Determines the JSON word list currently used (or `null` for the built-in list, which embeds the full default list).
 
 #### 2.2. `appState` (Volatile & Partially Persistent)
 Contains the dynamic state of the application:
@@ -45,17 +45,19 @@ Data is persisted in JSON via the `FileManager` (on **iCloud** by default for cr
 Saved data includes:
 - `players.json`: Player profiles, cumulative scores (2 points per Civilian win, etc.), and stats (`played`, `won`, `lost` by role).
 - `config.json`: Debug mode state and session configuration (`sessionConfig`).
-- `lists/` folder: Contains any external lists added by the user.
-- `*_used_words.json`: Keeps track of word pairs already played in a list to avoid repetition.
+- `lists/` folder: Contains the official lists downloaded from the repository and any list added by the user.
+- `lists/*__used_words.json`: Keeps track of the word groups already played in a list (see 4.1).
+- `logs/` folder: One text log per game (see 6).
 
 ### 4. Game Logic
 
 #### 4.1. Launch (`launchGame()`)
 When a game is launched:
 1. The script determines the number of Undercovers (automatic calculation via 25% rounded up, or manual) and Mr. White.
-2. `assignRoles()` shuffles the selected players and distributes the roles (Mr. White, then Undercovers, then remaining Civilians).
-3. A pair of words is drawn at random (`pickPair()`) and assigned to the Civilians and Undercovers.
-4. Distribution is done either by reading on the screen (`showOnScreen`) or by sending automatic SMS (`sendInitialSMS`).
+2. A group of 4-5 words is drawn at random (`pickPair()`) among the groups **never played** with this list (the whitelist). Two of its words become the Civilians' and the Undercovers' words, and the whole group is marked as used: no pair from this group can come out again.
+3. When the whitelist is empty, the game announces that every word has been used and offers to reset it (also available in *Advanced settings > Reset used words*).
+4. `assignRoles()` draws the roles uniformly and shuffles the distribution order; `buildTurnOrder()` makes sure Mr. White never speaks first.
+5. Distribution is done either on screen (`showOnScreen`: the game first announces who to hand the phone to and waits for that player's confirmation before showing their word) or by sending SMS (`sendInitialSMS`).
 
 #### 4.2. Eliminations (`executeElimination(phone)`)
 Executed when a player is eliminated from the interface:
@@ -75,14 +77,27 @@ If a victory condition is met:
 
 ### 5. Customization (External Words)
 
-The script allows the import of JSON lists. These must be placed in the iCloud folder `Scriptable/Undercover/lists/` in the format:
+Word lists are JSON files made of groups of 4-5 related words:
 ```json
 [
-  { "civil": "Word A", "undercover": "Word B" },
-  { "civil": "Dog", "undercover": "Cat" }
+  [ "Word A", "Word B", "Word C", "Word D" ],
+  [ "Dog", "Cat", "Wolf", "Fox" ]
 ]
 ```
-The "Advanced settings" interface then allows selecting these lists on the fly without touching the source code.
+The legacy pair format (`[{ "civil": "...", "undercover": "..." }]`) is still supported.
+
+Official lists live in the repository's `lists/` folder and are referenced in `lists/index.json`. They are downloaded on first launch and with *Advanced settings > Change word list > Update official lists*:
+
+| File | Content |
+| --- | --- |
+| `default_en.json` | Default list (50 groups), also embedded in the script |
+| `pop_culture_en.json` | Pop culture: movies, series, video games, brands... (64 groups) |
+
+To import your own list, drop a `.json` file in `Scriptable/Undercover/lists/` (Files app) and select it in *Change word list*. To publish a new official list, add the file to `lists/` and its name to `lists/index.json`.
+
+### 6. Game logs
+
+Each game writes a text log in `Scriptable/Undercover/logs/` (Files app > iCloud Drive > Scriptable > Undercover > logs, or *On My iPhone* without iCloud): drawn list and words, roles, speaking order of every round, eliminations, Mr. White's guess, result and points. Abandoned or interrupted games are logged too. The *Game history* screen lists, opens and clears these logs.
 
 ---
 
@@ -110,7 +125,7 @@ L'état de l'application est maintenu dans deux objets distincts.
 #### 2.1. `sessionConfig` (Persistant)
 Gère les préférences globales qui s'appliquent d'une session à l'autre :
 - `showRoleInMessage` / `showPseudoInMessage` : Permet d'inclure ou non des informations explicites dans les SMS distribués aux joueurs.
-- `activeListName` : Détermine la liste de mots JSON actuellement utilisée (ou `null` pour la liste embarquée).
+- `activeListName` : Détermine la liste de mots JSON actuellement utilisée (ou `null` pour la liste embarquée, qui contient la liste par défaut complète).
 
 #### 2.2. `appState` (Volatil & Persistant partiel)
 Contient l'état dynamique de l'application :
@@ -127,17 +142,19 @@ Les données sont persistées en JSON via le `FileManager` (sur **iCloud** par d
 Les données sauvegardées incluent :
 - `players.json` : Profils des joueurs, scores cumulés (2 points par victoire Civil, etc.) et statistiques (`played`, `won`, `lost` par rôle).
 - `config.json` : État du mode Debug et configuration de session (`sessionConfig`).
-- Dossier `lists/` : Contient les éventuelles listes externes ajoutées par l'utilisateur.
-- `*_used_words.json` : Garde une trace des paires de mots déjà jouées dans une liste pour éviter les répétitions.
+- Dossier `lists/` : Contient les listes officielles téléchargées depuis le dépôt et les listes ajoutées par l'utilisateur.
+- `lists/*__used_words.json` : Garde une trace des groupes de mots déjà joués dans une liste (voir 4.1).
+- Dossier `logs/` : Un journal texte par partie (voir 6).
 
 ### 4. Logique du Jeu
 
 #### 4.1. Lancement (`launchGame()`)
 Lorsqu'une partie est lancée :
 1. Le script détermine le nombre d'infiltrés (calcul automatique via 25% arrondi au supérieur, ou manuel) et de Mister White.
-2. `assignRoles()` mélange les joueurs sélectionnés et distribue les rôles (Mister White, puis Infiltrés, puis Civils restants).
-3. Une paire de mots est tirée au sort (`pickPair()`) et assignée aux Civils et Infiltrés.
-4. La distribution se fait soit par lecture à l'écran (`showOnScreen`), soit par envoi de SMS automatiques (`sendInitialSMS`).
+2. Un groupe de 4-5 mots est tiré au sort (`pickPair()`) parmi les groupes **jamais joués** avec cette liste (la liste blanche). Deux de ses mots deviennent le mot des Civils et celui des Infiltrés, et le groupe entier est marqué comme utilisé : aucun couple de ce groupe ne peut ressortir.
+3. Quand la liste blanche est vide, le jeu annonce que tous les mots ont été utilisés et propose de la réinitialiser (également possible via *Configuration avancée > Réinitialiser les mots utilisés*).
+4. `assignRoles()` tire les rôles uniformément et mélange l'ordre de distribution ; `buildTurnOrder()` garantit que Mister White ne parle jamais en premier.
+5. La distribution se fait soit à l'écran (`showOnScreen` : le jeu annonce d'abord à qui passer le téléphone et attend la confirmation de ce joueur avant d'afficher son mot), soit par SMS (`sendInitialSMS`).
 
 #### 4.2. Éliminations (`executeElimination(phone)`)
 Exécutée lorsqu'un joueur est éliminé depuis l'interface :
@@ -157,11 +174,24 @@ Si une condition de victoire est remplie :
 
 ### 5. Personnalisation (Mots externes)
 
-Le script permet l'import de listes JSON. Celles-ci doivent être déposées dans le dossier iCloud `Scriptable/Undercover/lists/` sous la forme :
+Les listes de mots sont des fichiers JSON composés de groupes de 4-5 mots proches :
 ```json
 [
   [ "Mot A", "Mot B", "Mot C", "Mot D" ],
   [ "Chien", "Chat", "Loup", "Renard" ]
 ]
 ```
-L'interface de "Configuration avancée" permet alors de sélectionner ces listes à la volée sans toucher au code source. Note : l'ancien format par paire (`[{ "civil": "...", "undercover": "..." }]`) est toujours pris en charge par rétrocompatibilité.patibilité.
+L'ancien format par paire (`[{ "civil": "...", "undercover": "..." }]`) est toujours pris en charge.
+
+Les listes officielles sont dans le dossier `lists/` du dépôt et référencées dans `lists/index.json`. Elles sont téléchargées au premier lancement et via *Configuration avancée > Changer de liste de mots > Mettre à jour les listes officielles* :
+
+| Fichier | Contenu |
+| --- | --- |
+| `default_fr.json` | Liste par défaut (50 groupes), également embarquée dans le script |
+| `culture_pop_fr.json` | Culture pop : films, séries, jeux vidéo, marques... (64 groupes) |
+
+Pour importer votre propre liste, déposez un fichier `.json` dans `Scriptable/Undercover/lists/` (app Fichiers) puis sélectionnez-la dans *Changer de liste de mots*. Pour publier une nouvelle liste officielle, ajoutez le fichier dans `lists/` et son nom dans `lists/index.json`.
+
+### 6. Journal des parties
+
+Chaque partie écrit un journal texte dans `Scriptable/Undercover/logs/` (app Fichiers > iCloud Drive > Scriptable > Undercover > logs, ou *Sur mon iPhone* sans iCloud) : liste et mots tirés, rôles, ordre de parole de chaque manche, éliminations, tentative de Mister White, résultat et points. Les parties abandonnées ou interrompues sont aussi consignées. L'écran *Historique des parties* permet de lister, ouvrir et effacer ces journaux.
