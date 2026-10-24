@@ -21,6 +21,63 @@ const LISTS_FOLDER  = "lists";
 const FILE_PLAYERS  = "players.json";
 const FILE_CONFIG   = "config.json";
 const APP_VERSION   = "1.0";
+const LANG          = "en";
+const REPO_RAW_URL  = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main";
+const EMBEDDED_KEY  = "__embedded";
+
+// Built-in list: copy of lists/default_en.json, used offline or when the active list cannot be found.
+const EMBEDDED_WORDS = [
+  ["Cat", "Tiger", "Lion", "Panther"],
+  ["Coca-Cola", "Pepsi", "Dr Pepper", "Sprite"],
+  ["Football", "Rugby", "Soccer", "Basketball"],
+  ["Chocolate", "Cocoa", "Coffee", "Tea"],
+  ["Beach", "Pool", "Lake", "River"],
+  ["Car", "Motorcycle", "Bicycle", "Scooter"],
+  ["New York", "London", "Paris", "Tokyo"],
+  ["Pizza", "Quiche", "Pie", "Pancake"],
+  ["Guitar", "Violin", "Cello", "Bass"],
+  ["Movie Theater", "Theater", "Concert", "Opera"],
+  ["Shark", "Dolphin", "Whale", "Orca"],
+  ["Apple", "Pear", "Peach", "Apricot"],
+  ["Skiing", "Snowboarding", "Sledding", "Ice Skating"],
+  ["Castle", "Manor", "Palace", "Villa"],
+  ["Sun", "Moon", "Star", "Planet"],
+  ["Red", "Blue", "Green", "Yellow"],
+  ["Airplane", "Helicopter", "Hot Air Balloon", "Rocket"],
+  ["Book", "Magazine", "Newspaper", "Comic"],
+  ["Gold", "Silver", "Bronze", "Copper"],
+  ["Dog", "Wolf", "Fox", "Coyote"],
+  ["Table", "Chair", "Stool", "Bench"],
+  ["Pen", "Pencil", "Marker", "Highlighter"],
+  ["Jacket", "Coat", "Sweater", "Vest"],
+  ["Boat", "Ship", "Sailboat", "Submarine"],
+  ["Computer", "Tablet", "Smartphone", "Console"],
+  ["Piano", "Keyboard", "Organ", "Synthesizer"],
+  ["Bakery", "Pastry Shop", "Butcher", "Grocery Store"],
+  ["Pine", "Oak", "Birch", "Maple"],
+  ["Cake", "Cookie", "Pie", "Brownie"],
+  ["Mountain", "Hill", "Valley", "Plateau"],
+  ["Ice Cream", "Sorbet", "Gelato", "Slushie"],
+  ["Pants", "Shorts", "Jeans", "Sweatpants"],
+  ["Beer", "Wine", "Cider", "Champagne"],
+  ["Train", "Subway", "Tram", "Bus"],
+  ["Eagle", "Falcon", "Owl", "Hawk"],
+  ["Banana", "Orange", "Tangerine", "Grapefruit"],
+  ["Glasses", "Contacts", "Binoculars", "Microscope"],
+  ["Shower", "Bath", "Jacuzzi", "Sauna"],
+  ["Earth", "Mars", "Venus", "Jupiter"],
+  ["Pool", "Sea", "Ocean", "Lake"],
+  ["Strawberry", "Raspberry", "Blueberry", "Blackberry"],
+  ["Bedroom", "Living Room", "Kitchen", "Bathroom"],
+  ["Winter", "Summer", "Spring", "Autumn"],
+  ["Horse", "Pony", "Donkey", "Mule"],
+  ["Giraffe", "Zebra", "Elephant", "Hippopotamus"],
+  ["Knife", "Fork", "Spoon", "Spatula"],
+  ["Spider", "Ant", "Bee", "Mosquito"],
+  ["Sky", "Cloud", "Rain", "Snow"],
+  ["Diamond", "Ruby", "Emerald", "Sapphire"],
+  ["Firefighter", "Police Officer", "Doctor", "Nurse"]
+];
 
 let sessionConfig = {
   showRoleInMessage: false,
@@ -30,7 +87,7 @@ let sessionConfig = {
 
 let appState = {
   view: "main",
-  prevView: "main", 
+  prevView: "main",
   players: [],
   contacts: null,
   contactQuery: "",
@@ -39,9 +96,10 @@ let appState = {
     selected: new Set(),
     nbInfil: -1,
     nbMW: 0,
+    pair: null,
     assignments: [],
-    alive: [], 
-    turnOrder: [], 
+    alive: [],
+    turnOrder: [],
     round: 1,
     method: "screen",
     status: "playing",
@@ -57,60 +115,58 @@ let appState = {
 function getFM() { try { return FileManager.iCloud(); } catch (e) { return FileManager.local(); } }
 function rootPath() { return getFM().joinPath(getFM().documentsDirectory(), FOLDER_NAME); }
 function listsPath() { return getFM().joinPath(rootPath(), LISTS_FOLDER); }
+function listFilePath(listName) { return getFM().joinPath(listsPath(), listName + ".json"); }
 function playersPath() { return getFM().joinPath(rootPath(), FILE_PLAYERS); }
 function configPath() { return getFM().joinPath(rootPath(), FILE_CONFIG); }
 function usedWordsPath(listName) { return getFM().joinPath(listsPath(), listName + "__used_words.json"); }
 
-async function ensureStorage() {
+function ensureStorage() {
   const fm = getFM();
   if (!fm.fileExists(rootPath())) fm.createDirectory(rootPath(), true);
   if (!fm.fileExists(listsPath())) fm.createDirectory(listsPath(), true);
   if (!fm.fileExists(playersPath())) writeJSON(playersPath(), []);
   if (!fm.fileExists(configPath())) saveConfig();
+}
 
-  const defaultListPath = fm.joinPath(listsPath(), "default_en.json");
-  if (!fm.fileExists(defaultListPath)) {
-    try {
-      let req = new Request("https://raw.githubusercontent.com/WolfGang-PRoxa/Undercover_scriptable/main/undercover/lists/default_en.json");
-      let data = await req.loadString();
-      if (req.response.statusCode === 200) fm.writeString(defaultListPath, data);
-    } catch (e) {}
+// iCloud files may be evicted from the device: download them before any synchronous read.
+async function prefetchStorage() {
+  const fm = getFM();
+  for (const dir of [rootPath(), listsPath()]) {
+    let files = [];
+    try { files = fm.listContents(dir); } catch (e) {}
+    for (const f of files) {
+      const path = fm.joinPath(dir, f);
+      try { if (fm.isFileStoredIniCloud(path) && !fm.isFileDownloaded(path)) await fm.downloadFileFromiCloud(path); } catch (e) {}
+    }
   }
 }
 
 function writeJSON(path, data) { getFM().writeString(path, JSON.stringify(data, null, 2)); }
+function readJSON(path, fallback) { try { return JSON.parse(getFM().readString(path)); } catch (e) { return fallback; } }
 
 function saveConfig() { writeJSON(configPath(), { DEBUG_MODE, sessionConfig }); }
 
 function loadConfig() {
-  const fm = getFM(), path = configPath();
-  try {
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    if (data.DEBUG_MODE !== undefined) DEBUG_MODE = data.DEBUG_MODE;
-    if (data.sessionConfig) sessionConfig = { ...sessionConfig, ...data.sessionConfig };
-  } catch (e) {}
+  const data = readJSON(configPath(), {});
+  if (data.DEBUG_MODE !== undefined) DEBUG_MODE = data.DEBUG_MODE;
+  if (data.sessionConfig) sessionConfig = { ...sessionConfig, ...data.sessionConfig };
 }
 
 function loadPlayers() {
-  const fm = getFM(), path = playersPath();
-  try {
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    return Array.isArray(data) ? data.map(p => {
-      let r = p.roles || {};
-      let nRole = (d) => {
-        if (typeof d === 'number') return { played: d, won: 0, lost: 0 };
-        if (typeof d === 'object' && d !== null) return { played: d.played || 0, won: d.won || 0, lost: d.lost || 0 };
-        return { played: 0, won: 0, lost: 0 };
-      };
-      return { 
-        ...p, 
-        score: p.score || 0,
-        roles: { civil: nRole(r.civil), infiltre: nRole(r.infiltre), mrwhite: nRole(r.mrwhite) }
-      };
-    }) : [];
-  } catch (e) { return []; }
+  const data = readJSON(playersPath(), []);
+  return Array.isArray(data) ? data.map(p => {
+    let r = p.roles || {};
+    let nRole = (d) => {
+      if (typeof d === 'number') return { played: d, won: 0, lost: 0 };
+      if (typeof d === 'object' && d !== null) return { played: d.played || 0, won: d.won || 0, lost: d.lost || 0 };
+      return { played: 0, won: 0, lost: 0 };
+    };
+    return {
+      ...p,
+      score: p.score || 0,
+      roles: { civil: nRole(r.civil), infiltre: nRole(r.infiltre), mrwhite: nRole(r.mrwhite) }
+    };
+  }) : [];
 }
 
 function savePlayers() { writeJSON(playersPath(), appState.players); }
@@ -130,66 +186,95 @@ function addScore(phone, points) {
 function getAvailableLists() {
   const fm = getFM(), lp = listsPath(), names = [];
   try { fm.listContents(lp).forEach(f => { if (f.endsWith(".json") && !f.includes("__used_words")) names.push(f.replace(".json", "")); }); } catch (e) {}
-  return names;
+  return names.sort();
 }
 
-function loadExternalList(listName) {
-  const fm = getFM(), path = getFM().joinPath(listsPath(), listName + ".json");
-  try {
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    return Array.isArray(data) ? data.filter(p => (p.civil && p.undercover) || (Array.isArray(p) && p.length >= 2)) : null;
-  } catch (e) { return null; }
-}
-
-function loadUsedWords(listName) {
-  const fm = getFM(), path = usedWordsPath(listName);
-  try {
-    if (!fm.fileExists(path)) return [];
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    return Array.isArray(data) ? data : [];
-  } catch (e) { return []; }
-}
-
-function pickPair(listName) {
-  let activeList = listName || "default_en";
-  let allItems = loadExternalList(activeList);
-  if (!allItems || allItems.length === 0) {
-    allItems = [["Cat", "Dog", "Wolf", "Fox"], ["Sun", "Moon", "Star", "Planet"]];
-  }
-
-  const used = loadUsedWords(activeList);
-  const usedSet = new Set(used.map(u => u.id || (u.civil + "|" + u.undercover)));
-  
-  let remaining = allItems.filter(item => {
-    let id;
-    if (Array.isArray(item)) id = [...item].sort().join("-");
-    else id = item.civil + "|" + item.undercover;
-    return !usedSet.has(id);
+// Normalizes a raw list into groups { id, words, fixed }.
+// Accepted formats: [["Word A", "Word B", ...], ...] or [{ "civil": "...", "undercover": "..." }, ...]
+function parseWordList(data) {
+  if (!Array.isArray(data)) return [];
+  const groups = [], seen = new Set();
+  const add = (group) => { if (!seen.has(group.id)) { seen.add(group.id); groups.push(group); } };
+  data.forEach(item => {
+    if (Array.isArray(item)) {
+      const words = [...new Set(item.filter(w => typeof w === "string").map(w => w.trim()).filter(w => w))];
+      if (words.length >= 2) add({ id: [...words].sort().join("-"), words, fixed: false });
+    } else if (item && typeof item.civil === "string" && typeof item.undercover === "string") {
+      const civil = item.civil.trim(), undercover = item.undercover.trim();
+      if (civil && undercover && civil !== undercover) add({ id: civil + "|" + undercover, words: [civil, undercover], fixed: true });
+    }
   });
+  return groups;
+}
 
-  if (remaining.length === 0) {
-    writeJSON(usedWordsPath(activeList), []);
-    remaining = allItems;
+// Word pool of a list. If the list is missing or invalid, fall back to the embedded list.
+function loadWordPool(listName) {
+  if (listName) {
+    const groups = parseWordList(readJSON(listFilePath(listName), null));
+    if (groups.length > 0) return { key: listName, label: listName, groups, missing: false };
   }
+  return { key: EMBEDDED_KEY, label: "Built-in list", groups: parseWordList(EMBEDDED_WORDS), missing: !!listName };
+}
 
-  const chosenItem = remaining[Math.floor(Math.random() * remaining.length)];
-  let chosenPair;
-  let idToSave;
-  if (Array.isArray(chosenItem)) {
-    const shuffled = [...chosenItem].sort(() => 0.5 - Math.random());
-    chosenPair = { civil: shuffled[0], undercover: shuffled[1] };
-    idToSave = [...chosenItem].sort().join("-");
-  } else {
-    chosenPair = { civil: chosenItem.civil, undercover: chosenItem.undercover };
-    idToSave = chosenItem.civil + "|" + chosenItem.undercover;
+function loadUsedWords(key) {
+  const data = readJSON(usedWordsPath(key), []);
+  return Array.isArray(data) ? data : [];
+}
+
+function resetUsedWords(key) { writeJSON(usedWordsPath(key), []); }
+
+// Whitelist: groups of the list that have not been played in any game yet.
+function remainingGroups(pool) {
+  const usedSet = new Set(loadUsedWords(pool.key).map(u => u.id || (u.civil + "|" + u.undercover)));
+  return pool.groups.filter(g => !usedSet.has(g.id));
+}
+
+// Draws a group from the whitelist and removes it for the next games.
+// Returns null when every group has already been played.
+function pickPair(pool) {
+  const remaining = remainingGroups(pool);
+  if (remaining.length === 0) return null;
+
+  const group = remaining[Math.floor(Math.random() * remaining.length)];
+  const [civil, undercover] = group.fixed ? group.words : shuffle(group.words);
+
+  const used = loadUsedWords(pool.key);
+  used.push({ id: group.id, civil, undercover, date: new Date().toISOString() });
+  writeJSON(usedWordsPath(pool.key), used);
+  return { civil, undercover, words: group.words, listLabel: pool.label, remaining: remaining.length - 1, total: pool.groups.length };
+}
+
+// Downloads the official lists referenced in lists/index.json on the repository.
+// Returns { downloaded, failed } or null if the repository cannot be reached.
+async function syncRemoteLists() {
+  const fetchText = async (url) => {
+    const req = new Request(url);
+    req.timeoutInterval = 10;
+    const text = await req.loadString();
+    if (req.response.statusCode !== 200) throw new Error("HTTP " + req.response.statusCode);
+    return text;
+  };
+
+  let names;
+  try {
+    const index = JSON.parse(await fetchText(`${REPO_RAW_URL}/${LISTS_FOLDER}/index.json`));
+    names = (index[LANG] || []).filter(n => /^[\w-]+$/.test(n));
+  } catch (e) { return null; }
+
+  const result = { downloaded: [], failed: [] };
+  for (const name of names) {
+    try {
+      const text = await fetchText(`${REPO_RAW_URL}/${LISTS_FOLDER}/${name}.json`);
+      if (parseWordList(JSON.parse(text)).length === 0) throw new Error("Empty list");
+      getFM().writeString(listFilePath(name), text);
+      result.downloaded.push(name);
+    } catch (e) { result.failed.push(name); }
   }
+  return result;
+}
 
-  const usedUpdated = loadUsedWords(activeList);
-  usedUpdated.push({ id: idToSave, civil: chosenPair.civil, undercover: chosenPair.undercover, date: new Date().toISOString() });
-  writeJSON(usedWordsPath(activeList), usedUpdated);
-  return chosenPair;
+function listStatus(pool) {
+  return `${remainingGroups(pool).length}/${pool.groups.length} groups left`;
 }
 
 // ─────────────────────────────────────────────
@@ -566,7 +651,16 @@ async function startApp() {
         addHeader("⚙️ Advanced", "Game settings");
         addRow("◀", "Back", "", Color.blue(), () => { appState.view = appState.prevView; render(); });
         
-        addRow("📚", "Change word list", `Active: ${sessionConfig.activeListName || "⭐ Built-in"}`, null, async () => { appState.view = "lists"; render(); });
+        let pool = loadWordPool(sessionConfig.activeListName);
+        let poolName = pool.missing ? `${sessionConfig.activeListName} (not found → ⭐ Built-in)` : sessionConfig.activeListName || "⭐ Built-in";
+        addRow("📚", "Change word list", `Active: ${poolName} • ${listStatus(pool)}`, null, async () => { appState.view = "lists"; render(); });
+        addRow("♻️", "Reset used words", "Puts every group of the active list back in play", null, async () => {
+          let a = new Alert();
+          a.title = "Reset the whitelist?";
+          a.message = `The ${pool.groups.length} groups of "${pool.label}" can be drawn again.`;
+          a.addDestructiveAction("Reset"); a.addCancelAction("Cancel");
+          if (await a.presentAlert() === 0) { resetUsedWords(pool.key); render(); }
+        });
         addRow("🏷️", "Include role in SMS", sessionConfig.showRoleInMessage ? "🟢 ON" : "⚪ OFF", null, () => { sessionConfig.showRoleInMessage = !sessionConfig.showRoleInMessage; saveConfig(); render(); });
         addRow("👤", "Include nickname in SMS", sessionConfig.showPseudoInMessage ? "🟢 ON" : "⚪ OFF", null, () => { sessionConfig.showPseudoInMessage = !sessionConfig.showPseudoInMessage; saveConfig(); render(); });
       }
@@ -577,12 +671,28 @@ async function startApp() {
         addHeader("📚 Lists", "Choose the active word list");
         addRow("◀", "Back", "", Color.blue(), () => { appState.view = "advanced"; render(); });
         
-        addRow("⭐", "Built-in List", "Included in the script", sessionConfig.activeListName === null ? Color.green() : null, () => {
+        addRow("🔄", "Update official lists", "Downloads the lists from the repository", Color.blue(), async () => {
+          let res = await syncRemoteLists();
+          let a = new Alert();
+          if (!res) {
+            a.title = "❌ Download failed";
+            a.message = "Unable to reach the repository. Check your internet connection.";
+          } else {
+            a.title = "✅ Lists up to date";
+            a.message = `Downloaded: ${res.downloaded.join(", ") || "none"}` + (res.failed.length ? `\nFailed: ${res.failed.join(", ")}` : "");
+          }
+          a.addAction("OK"); await a.presentAlert();
+          render();
+        });
+
+        addRow("⭐", "Built-in List", `Included in the script • ${listStatus(loadWordPool(null))}`, sessionConfig.activeListName === null ? Color.green() : null, () => {
           sessionConfig.activeListName = null; saveConfig(); appState.view = "advanced"; render();
         });
         
         getAvailableLists().forEach(list => {
-           addRow("📄", list, "", sessionConfig.activeListName === list ? Color.green() : null, () => {
+           let pool = loadWordPool(list);
+           let sub = pool.missing ? "⚠️ Invalid file" : listStatus(pool);
+           addRow("📄", list, sub, sessionConfig.activeListName === list ? Color.green() : null, () => {
              sessionConfig.activeListName = list; saveConfig(); appState.view = "advanced"; render();
            });
         });
@@ -689,7 +799,28 @@ async function launchGame() {
   let effInfil = appState.game.nbInfil === -1 ? Math.ceil(selectedPlayers.length * 0.25) : appState.game.nbInfil;
   let effMW = appState.game.nbMW;
 
-  appState.game.assignments = assignRoles(selectedPlayers, effInfil, effMW);
+  const pool = loadWordPool(sessionConfig.activeListName);
+  if (pool.missing) {
+    let w = new Alert();
+    w.title = "⚠️ List not found";
+    w.message = `The list "${sessionConfig.activeListName}" is missing or invalid: the built-in list will be used.\n\nTip: Advanced settings > Change word list > Update official lists.`;
+    w.addAction("OK"); await w.presentAlert();
+  }
+
+  let pair = pickPair(pool);
+  if (!pair) {
+    let a = new Alert();
+    a.title = "📭 All words have been used";
+    a.message = `All ${pool.groups.length} word groups of "${pool.label}" have been played in previous games.\n\nReset the whitelist to put them back in play, or choose another list.`;
+    a.addDestructiveAction("Reset the whitelist");
+    a.addCancelAction("Cancel");
+    if (await a.presentAlert() !== 0) return;
+    resetUsedWords(pool.key);
+    pair = pickPair(pool);
+  }
+
+  appState.game.pair = pair;
+  appState.game.assignments = assignRoles(selectedPlayers, effInfil, effMW, pair);
   appState.game.alive = selectedPlayers.map(p => p.phone);
   appState.game.round = 1;
   appState.game.turnOrder = shuffle(appState.game.alive);
@@ -715,9 +846,8 @@ async function launchGame() {
   appState.view = "playing";
 }
 
-function assignRoles(players, nbInfil, nbMW) {
+function assignRoles(players, nbInfil, nbMW, pair) {
   const n = players.length;
-  const pair = pickPair(sessionConfig.activeListName);
   const shuffled = shuffle(players);
   
   const validMWSlots = []; for (let i = Math.floor(n / 2); i < n; i++) validMWSlots.push(i);
@@ -734,7 +864,7 @@ function assignRoles(players, nbInfil, nbMW) {
     let role = mwPositions.has(i) ? "Mr. White" : infilPositions.has(i) ? "Undercover" : "Civilian";
     let word = role === "Mr. White" ? null : role === "Undercover" ? pair.undercover : pair.civil;
     let emoji = role === "Mr. White" ? "👻" : role === "Undercover" ? "🕵️" : "🙂";
-    assignments.push({ player: shuffled[i], role, word, emoji, orderIndex: i + 1, isPair: pair });
+    assignments.push({ player: shuffled[i], role, word, emoji, orderIndex: i + 1 });
   }
   return assignments;
 }
@@ -867,7 +997,7 @@ async function showEndGameSummary() {
     msg = "Mr. White guessed the word and steals the victory!\n(+6 pts for him)";
   }
 
-  let pair = appState.game.assignments.find(a => a.isPair).isPair;
+  let pair = appState.game.pair;
   msg += `\n\n🔑 Secret words:\nCivilian: ${pair.civil}\nUndercover: ${pair.undercover}`;
 
   let a = new Alert(); a.title = title; a.message = msg; a.addAction("Return to menu");
@@ -914,8 +1044,14 @@ async function showOnScreen() {
 
 async function main() {
   ensureStorage();
+  await prefetchStorage();
   loadConfig();
   appState.players = loadPlayers();
+
+  // First install or update: the active list is not on the device yet.
+  if (sessionConfig.activeListName && !getFM().fileExists(listFilePath(sessionConfig.activeListName))) {
+    await syncRemoteLists();
+  }
   
   while(true) {
     let action = await startApp();

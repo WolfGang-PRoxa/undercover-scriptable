@@ -21,6 +21,63 @@ const LISTS_FOLDER  = "lists";
 const FILE_PLAYERS  = "players.json";
 const FILE_CONFIG   = "config.json";
 const APP_VERSION   = "1.0";
+const LANG          = "fr";
+const REPO_RAW_URL  = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main";
+const EMBEDDED_KEY  = "__embarquee";
+
+// Liste embarquée : copie de lists/default_fr.json, utilisée hors-ligne ou si la liste active est introuvable.
+const EMBEDDED_WORDS = [
+  ["Chat", "Tigre", "Lion", "Panthère"],
+  ["Coca-Cola", "Pepsi", "Oasis", "Orangina"],
+  ["Football", "Rugby", "Handball", "Basketball"],
+  ["Chocolat", "Cacao", "Café", "Thé"],
+  ["Plage", "Piscine", "Lac", "Rivière"],
+  ["Voiture", "Moto", "Vélo", "Scooter"],
+  ["Paris", "Lyon", "Marseille", "Bordeaux"],
+  ["Pizza", "Quiche", "Tarte", "Crêpe"],
+  ["Guitare", "Violon", "Violoncelle", "Basse"],
+  ["Cinéma", "Théâtre", "Concert", "Opéra"],
+  ["Requin", "Dauphin", "Baleine", "Orque"],
+  ["Pomme", "Poire", "Pêche", "Abricot"],
+  ["Ski", "Snowboard", "Luge", "Patin à glace"],
+  ["Château", "Manoir", "Palais", "Villa"],
+  ["Soleil", "Lune", "Étoile", "Planète"],
+  ["Rouge", "Bleu", "Vert", "Jaune"],
+  ["Avion", "Hélicoptère", "Montgolfière", "Fusée"],
+  ["Livre", "Magazine", "Journal", "Bande dessinée"],
+  ["Or", "Argent", "Bronze", "Cuivre"],
+  ["Chien", "Loup", "Renard", "Coyote"],
+  ["Table", "Chaise", "Tabouret", "Banc"],
+  ["Stylo", "Crayon", "Feutre", "Surligneur"],
+  ["Veste", "Manteau", "Pull", "Gilet"],
+  ["Bateau", "Navire", "Voilier", "Sous-marin"],
+  ["Ordinateur", "Tablette", "Smartphone", "Console"],
+  ["Piano", "Clavier", "Orgue", "Synthétiseur"],
+  ["Boulangerie", "Pâtisserie", "Boucherie", "Épicerie"],
+  ["Sapin", "Chêne", "Bouleau", "Érable"],
+  ["Gâteau", "Biscuit", "Tarte", "Brownie"],
+  ["Montagne", "Colline", "Vallée", "Plateau"],
+  ["Glace", "Sorbet", "Crème glacée", "Granité"],
+  ["Pantalon", "Short", "Jeans", "Jogging"],
+  ["Bière", "Vin", "Cidre", "Champagne"],
+  ["Train", "Métro", "Tramway", "Bus"],
+  ["Aigle", "Faucon", "Chouette", "Hibou"],
+  ["Banane", "Orange", "Clémentine", "Pamplemousse"],
+  ["Lunettes", "Lentilles", "Jumelles", "Microscope"],
+  ["Douche", "Bain", "Jacuzzi", "Hammam"],
+  ["Terre", "Mars", "Vénus", "Jupiter"],
+  ["Piscine", "Mer", "Océan", "Lac"],
+  ["Fraise", "Framboise", "Myrtille", "Mûre"],
+  ["Chambre", "Salon", "Cuisine", "Salle de bain"],
+  ["Hiver", "Été", "Printemps", "Automne"],
+  ["Cheval", "Poney", "Âne", "Mule"],
+  ["Girafe", "Zèbre", "Éléphant", "Hippopotame"],
+  ["Couteau", "Fourchette", "Cuillère", "Spatule"],
+  ["Araignée", "Fourmi", "Abeille", "Moustique"],
+  ["Ciel", "Nuage", "Pluie", "Neige"],
+  ["Diamant", "Rubis", "Émeraude", "Saphir"],
+  ["Pompier", "Policier", "Médecin", "Infirmier"]
+];
 
 let sessionConfig = {
   showRoleInMessage: false,
@@ -30,7 +87,7 @@ let sessionConfig = {
 
 let appState = {
   view: "main",
-  prevView: "main", 
+  prevView: "main",
   players: [],
   contacts: null,
   contactQuery: "",
@@ -39,9 +96,10 @@ let appState = {
     selected: new Set(),
     nbInfil: -1,
     nbMW: 0,
+    pair: null,
     assignments: [],
-    alive: [], 
-    turnOrder: [], 
+    alive: [],
+    turnOrder: [],
     round: 1,
     method: "screen",
     status: "playing",
@@ -57,6 +115,7 @@ let appState = {
 function getFM() { try { return FileManager.iCloud(); } catch (e) { return FileManager.local(); } }
 function rootPath() { return getFM().joinPath(getFM().documentsDirectory(), FOLDER_NAME); }
 function listsPath() { return getFM().joinPath(rootPath(), LISTS_FOLDER); }
+function listFilePath(listName) { return getFM().joinPath(listsPath(), listName + ".json"); }
 function playersPath() { return getFM().joinPath(rootPath(), FILE_PLAYERS); }
 function configPath() { return getFM().joinPath(rootPath(), FILE_CONFIG); }
 function usedWordsPath(listName) { return getFM().joinPath(listsPath(), listName + "__used_words.json"); }
@@ -69,39 +128,45 @@ function ensureStorage() {
   if (!fm.fileExists(configPath())) saveConfig();
 }
 
+// Les fichiers iCloud peuvent être déchargés de l'appareil : on les rapatrie avant toute lecture synchrone.
+async function prefetchStorage() {
+  const fm = getFM();
+  for (const dir of [rootPath(), listsPath()]) {
+    let files = [];
+    try { files = fm.listContents(dir); } catch (e) {}
+    for (const f of files) {
+      const path = fm.joinPath(dir, f);
+      try { if (fm.isFileStoredIniCloud(path) && !fm.isFileDownloaded(path)) await fm.downloadFileFromiCloud(path); } catch (e) {}
+    }
+  }
+}
+
 function writeJSON(path, data) { getFM().writeString(path, JSON.stringify(data, null, 2)); }
+function readJSON(path, fallback) { try { return JSON.parse(getFM().readString(path)); } catch (e) { return fallback; } }
 
 function saveConfig() { writeJSON(configPath(), { DEBUG_MODE, sessionConfig }); }
 
 function loadConfig() {
-  const fm = getFM(), path = configPath();
-  try {
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    if (data.DEBUG_MODE !== undefined) DEBUG_MODE = data.DEBUG_MODE;
-    if (data.sessionConfig) sessionConfig = { ...sessionConfig, ...data.sessionConfig };
-  } catch (e) {}
+  const data = readJSON(configPath(), {});
+  if (data.DEBUG_MODE !== undefined) DEBUG_MODE = data.DEBUG_MODE;
+  if (data.sessionConfig) sessionConfig = { ...sessionConfig, ...data.sessionConfig };
 }
 
 function loadPlayers() {
-  const fm = getFM(), path = playersPath();
-  try {
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    return Array.isArray(data) ? data.map(p => {
-      let r = p.roles || {};
-      let nRole = (d) => {
-        if (typeof d === 'number') return { played: d, won: 0, lost: 0 };
-        if (typeof d === 'object' && d !== null) return { played: d.played || 0, won: d.won || 0, lost: d.lost || 0 };
-        return { played: 0, won: 0, lost: 0 };
-      };
-      return { 
-        ...p, 
-        score: p.score || 0,
-        roles: { civil: nRole(r.civil), infiltre: nRole(r.infiltre), mrwhite: nRole(r.mrwhite) }
-      };
-    }) : [];
-  } catch (e) { return []; }
+  const data = readJSON(playersPath(), []);
+  return Array.isArray(data) ? data.map(p => {
+    let r = p.roles || {};
+    let nRole = (d) => {
+      if (typeof d === 'number') return { played: d, won: 0, lost: 0 };
+      if (typeof d === 'object' && d !== null) return { played: d.played || 0, won: d.won || 0, lost: d.lost || 0 };
+      return { played: 0, won: 0, lost: 0 };
+    };
+    return {
+      ...p,
+      score: p.score || 0,
+      roles: { civil: nRole(r.civil), infiltre: nRole(r.infiltre), mrwhite: nRole(r.mrwhite) }
+    };
+  }) : [];
 }
 
 function savePlayers() { writeJSON(playersPath(), appState.players); }
@@ -121,66 +186,95 @@ function addScore(phone, points) {
 function getAvailableLists() {
   const fm = getFM(), lp = listsPath(), names = [];
   try { fm.listContents(lp).forEach(f => { if (f.endsWith(".json") && !f.includes("__used_words")) names.push(f.replace(".json", "")); }); } catch (e) {}
-  return names;
+  return names.sort();
 }
 
-function loadExternalList(listName) {
-  const fm = getFM(), path = getFM().joinPath(listsPath(), listName + ".json");
-  try {
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    return Array.isArray(data) ? data.filter(p => (p.civil && p.undercover) || (Array.isArray(p) && p.length >= 2)) : null;
-  } catch (e) { return null; }
-}
-
-function loadUsedWords(listName) {
-  const fm = getFM(), path = usedWordsPath(listName);
-  try {
-    if (!fm.fileExists(path)) return [];
-    if (fm.isFileStoredIniCloud && fm.isFileStoredIniCloud(path)) fm.downloadFileFromiCloud(path);
-    const data = JSON.parse(fm.readString(path));
-    return Array.isArray(data) ? data : [];
-  } catch (e) { return []; }
-}
-
-function pickPair(listName) {
-  let activeList = listName || "default_fr";
-  let allItems = loadExternalList(activeList);
-  if (!allItems || allItems.length === 0) {
-    allItems = [["Chat", "Chien", "Loup", "Renard"], ["Soleil", "Lune", "Étoile", "Planète"]];
-  }
-
-  const used = loadUsedWords(activeList);
-  const usedSet = new Set(used.map(u => u.id || (u.civil + "|" + u.undercover)));
-  
-  let remaining = allItems.filter(item => {
-    let id;
-    if (Array.isArray(item)) id = [...item].sort().join("-");
-    else id = item.civil + "|" + item.undercover;
-    return !usedSet.has(id);
+// Normalise une liste brute en groupes { id, words, fixed }.
+// Formats acceptés : [["Mot A", "Mot B", ...], ...] ou [{ "civil": "...", "undercover": "..." }, ...]
+function parseWordList(data) {
+  if (!Array.isArray(data)) return [];
+  const groups = [], seen = new Set();
+  const add = (group) => { if (!seen.has(group.id)) { seen.add(group.id); groups.push(group); } };
+  data.forEach(item => {
+    if (Array.isArray(item)) {
+      const words = [...new Set(item.filter(w => typeof w === "string").map(w => w.trim()).filter(w => w))];
+      if (words.length >= 2) add({ id: [...words].sort().join("-"), words, fixed: false });
+    } else if (item && typeof item.civil === "string" && typeof item.undercover === "string") {
+      const civil = item.civil.trim(), undercover = item.undercover.trim();
+      if (civil && undercover && civil !== undercover) add({ id: civil + "|" + undercover, words: [civil, undercover], fixed: true });
+    }
   });
+  return groups;
+}
 
-  if (remaining.length === 0) {
-    writeJSON(usedWordsPath(activeList), []);
-    remaining = allItems;
+// Réserve de mots d'une liste. Si la liste est absente ou invalide, on bascule sur la liste embarquée.
+function loadWordPool(listName) {
+  if (listName) {
+    const groups = parseWordList(readJSON(listFilePath(listName), null));
+    if (groups.length > 0) return { key: listName, label: listName, groups, missing: false };
   }
+  return { key: EMBEDDED_KEY, label: "Liste embarquée", groups: parseWordList(EMBEDDED_WORDS), missing: !!listName };
+}
 
-  const chosenItem = remaining[Math.floor(Math.random() * remaining.length)];
-  let chosenPair;
-  let idToSave;
-  if (Array.isArray(chosenItem)) {
-    const shuffled = [...chosenItem].sort(() => 0.5 - Math.random());
-    chosenPair = { civil: shuffled[0], undercover: shuffled[1] };
-    idToSave = [...chosenItem].sort().join("-");
-  } else {
-    chosenPair = { civil: chosenItem.civil, undercover: chosenItem.undercover };
-    idToSave = chosenItem.civil + "|" + chosenItem.undercover;
+function loadUsedWords(key) {
+  const data = readJSON(usedWordsPath(key), []);
+  return Array.isArray(data) ? data : [];
+}
+
+function resetUsedWords(key) { writeJSON(usedWordsPath(key), []); }
+
+// Liste blanche : groupes de la liste qui n'ont encore été joués dans aucune partie.
+function remainingGroups(pool) {
+  const usedSet = new Set(loadUsedWords(pool.key).map(u => u.id || (u.civil + "|" + u.undercover)));
+  return pool.groups.filter(g => !usedSet.has(g.id));
+}
+
+// Tire un groupe de la liste blanche et le retire pour les parties suivantes.
+// Renvoie null lorsque tous les groupes ont déjà été joués.
+function pickPair(pool) {
+  const remaining = remainingGroups(pool);
+  if (remaining.length === 0) return null;
+
+  const group = remaining[Math.floor(Math.random() * remaining.length)];
+  const [civil, undercover] = group.fixed ? group.words : shuffle(group.words);
+
+  const used = loadUsedWords(pool.key);
+  used.push({ id: group.id, civil, undercover, date: new Date().toISOString() });
+  writeJSON(usedWordsPath(pool.key), used);
+  return { civil, undercover, words: group.words, listLabel: pool.label, remaining: remaining.length - 1, total: pool.groups.length };
+}
+
+// Télécharge les listes officielles référencées dans lists/index.json sur le dépôt.
+// Renvoie { downloaded, failed } ou null si le dépôt est injoignable.
+async function syncRemoteLists() {
+  const fetchText = async (url) => {
+    const req = new Request(url);
+    req.timeoutInterval = 10;
+    const text = await req.loadString();
+    if (req.response.statusCode !== 200) throw new Error("HTTP " + req.response.statusCode);
+    return text;
+  };
+
+  let names;
+  try {
+    const index = JSON.parse(await fetchText(`${REPO_RAW_URL}/${LISTS_FOLDER}/index.json`));
+    names = (index[LANG] || []).filter(n => /^[\w-]+$/.test(n));
+  } catch (e) { return null; }
+
+  const result = { downloaded: [], failed: [] };
+  for (const name of names) {
+    try {
+      const text = await fetchText(`${REPO_RAW_URL}/${LISTS_FOLDER}/${name}.json`);
+      if (parseWordList(JSON.parse(text)).length === 0) throw new Error("Liste vide");
+      getFM().writeString(listFilePath(name), text);
+      result.downloaded.push(name);
+    } catch (e) { result.failed.push(name); }
   }
+  return result;
+}
 
-  const usedUpdated = loadUsedWords(activeList);
-  usedUpdated.push({ id: idToSave, civil: chosenPair.civil, undercover: chosenPair.undercover, date: new Date().toISOString() });
-  writeJSON(usedWordsPath(activeList), usedUpdated);
-  return chosenPair;
+function listStatus(pool) {
+  return `${remainingGroups(pool).length}/${pool.groups.length} groupes restants`;
 }
 
 // ─────────────────────────────────────────────
@@ -558,7 +652,16 @@ async function startApp() {
         addHeader("⚙️ Avancé", "Réglages du jeu");
         addRow("◀", "Retour", "", Color.blue(), () => { appState.view = appState.prevView; render(); });
         
-        addRow("📚", "Changer de liste de mots", `Active : ${sessionConfig.activeListName || "⭐ Embarquée"}`, null, async () => { appState.view = "lists"; render(); });
+        let pool = loadWordPool(sessionConfig.activeListName);
+        let poolName = pool.missing ? `${sessionConfig.activeListName} (introuvable → ⭐ Embarquée)` : sessionConfig.activeListName || "⭐ Embarquée";
+        addRow("📚", "Changer de liste de mots", `Active : ${poolName} • ${listStatus(pool)}`, null, async () => { appState.view = "lists"; render(); });
+        addRow("♻️", "Réinitialiser les mots utilisés", "Remet tous les groupes de la liste active en jeu", null, async () => {
+          let a = new Alert();
+          a.title = "Réinitialiser la liste blanche ?";
+          a.message = `Les ${pool.groups.length} groupes de « ${pool.label} » pourront de nouveau être tirés.`;
+          a.addDestructiveAction("Réinitialiser"); a.addCancelAction("Annuler");
+          if (await a.presentAlert() === 0) { resetUsedWords(pool.key); render(); }
+        });
         addRow("🏷️", "Inclure rôle dans le SMS", sessionConfig.showRoleInMessage ? "🟢 ON" : "⚪ OFF", null, () => { sessionConfig.showRoleInMessage = !sessionConfig.showRoleInMessage; saveConfig(); render(); });
         addRow("👤", "Inclure pseudo dans le SMS", sessionConfig.showPseudoInMessage ? "🟢 ON" : "⚪ OFF", null, () => { sessionConfig.showPseudoInMessage = !sessionConfig.showPseudoInMessage; saveConfig(); render(); });
       }
@@ -569,12 +672,28 @@ async function startApp() {
         addHeader("📚 Listes", "Choisissez la liste de mots active");
         addRow("◀", "Retour", "", Color.blue(), () => { appState.view = "advanced"; render(); });
         
-        addRow("⭐", "Liste Embarquée", "Incluse dans le script", sessionConfig.activeListName === null ? Color.green() : null, () => {
+        addRow("🔄", "Mettre à jour les listes officielles", "Télécharge les listes depuis le dépôt", Color.blue(), async () => {
+          let res = await syncRemoteLists();
+          let a = new Alert();
+          if (!res) {
+            a.title = "❌ Échec du téléchargement";
+            a.message = "Impossible de joindre le dépôt. Vérifiez votre connexion internet.";
+          } else {
+            a.title = "✅ Listes à jour";
+            a.message = `Téléchargées : ${res.downloaded.join(", ") || "aucune"}` + (res.failed.length ? `\nÉchecs : ${res.failed.join(", ")}` : "");
+          }
+          a.addAction("OK"); await a.presentAlert();
+          render();
+        });
+
+        addRow("⭐", "Liste Embarquée", `Incluse dans le script • ${listStatus(loadWordPool(null))}`, sessionConfig.activeListName === null ? Color.green() : null, () => {
           sessionConfig.activeListName = null; saveConfig(); appState.view = "advanced"; render();
         });
         
         getAvailableLists().forEach(list => {
-           addRow("📄", list, "", sessionConfig.activeListName === list ? Color.green() : null, () => {
+           let pool = loadWordPool(list);
+           let sub = pool.missing ? "⚠️ Fichier invalide" : listStatus(pool);
+           addRow("📄", list, sub, sessionConfig.activeListName === list ? Color.green() : null, () => {
              sessionConfig.activeListName = list; saveConfig(); appState.view = "advanced"; render();
            });
         });
@@ -681,7 +800,28 @@ async function launchGame() {
   let effInfil = appState.game.nbInfil === -1 ? Math.ceil(selectedPlayers.length * 0.25) : appState.game.nbInfil;
   let effMW = appState.game.nbMW;
 
-  appState.game.assignments = assignRoles(selectedPlayers, effInfil, effMW);
+  const pool = loadWordPool(sessionConfig.activeListName);
+  if (pool.missing) {
+    let w = new Alert();
+    w.title = "⚠️ Liste introuvable";
+    w.message = `La liste « ${sessionConfig.activeListName} » est absente ou invalide : la liste embarquée sera utilisée.\n\nAstuce : Configuration avancée > Changer de liste > Mettre à jour les listes officielles.`;
+    w.addAction("OK"); await w.presentAlert();
+  }
+
+  let pair = pickPair(pool);
+  if (!pair) {
+    let a = new Alert();
+    a.title = "📭 Tous les mots ont été utilisés";
+    a.message = `Les ${pool.groups.length} groupes de mots de « ${pool.label} » ont tous été joués au cours des parties précédentes.\n\nRéinitialisez la liste blanche pour les remettre en jeu, ou choisissez une autre liste.`;
+    a.addDestructiveAction("Réinitialiser la liste blanche");
+    a.addCancelAction("Annuler");
+    if (await a.presentAlert() !== 0) return;
+    resetUsedWords(pool.key);
+    pair = pickPair(pool);
+  }
+
+  appState.game.pair = pair;
+  appState.game.assignments = assignRoles(selectedPlayers, effInfil, effMW, pair);
   appState.game.alive = selectedPlayers.map(p => p.phone);
   appState.game.round = 1;
   appState.game.turnOrder = shuffle(appState.game.alive);
@@ -707,9 +847,8 @@ async function launchGame() {
   appState.view = "playing";
 }
 
-function assignRoles(players, nbInfil, nbMW) {
+function assignRoles(players, nbInfil, nbMW, pair) {
   const n = players.length;
-  const pair = pickPair(sessionConfig.activeListName);
   const shuffled = shuffle(players);
   
   const validMWSlots = []; for (let i = Math.floor(n / 2); i < n; i++) validMWSlots.push(i);
@@ -726,7 +865,7 @@ function assignRoles(players, nbInfil, nbMW) {
     let role = mwPositions.has(i) ? "Mister White" : infilPositions.has(i) ? "Infiltré" : "Civil";
     let word = role === "Mister White" ? null : role === "Infiltré" ? pair.undercover : pair.civil;
     let emoji = role === "Mister White" ? "👻" : role === "Infiltré" ? "🕵️" : "🙂";
-    assignments.push({ player: shuffled[i], role, word, emoji, orderIndex: i + 1, isPair: pair });
+    assignments.push({ player: shuffled[i], role, word, emoji, orderIndex: i + 1 });
   }
   return assignments;
 }
@@ -859,7 +998,7 @@ async function showEndGameSummary() {
     msg = "Mr. White a trouvé le mot et vole la victoire !\n(+6 pts pour lui)";
   }
 
-  let pair = appState.game.assignments.find(a => a.isPair).isPair;
+  let pair = appState.game.pair;
   msg += `\n\n🔑 Mots secrets :\nCivil : ${pair.civil}\nUndercover : ${pair.undercover}`;
 
   let a = new Alert(); a.title = title; a.message = msg; a.addAction("Retour au menu");
@@ -905,9 +1044,15 @@ async function showOnScreen() {
 // ─────────────────────────────────────────────
 
 async function main() {
-  await ensureStorage();
+  ensureStorage();
+  await prefetchStorage();
   loadConfig();
   appState.players = loadPlayers();
+
+  // Première installation ou mise à jour : la liste active n'est pas encore sur l'appareil.
+  if (sessionConfig.activeListName && !getFM().fileExists(listFilePath(sessionConfig.activeListName))) {
+    await syncRemoteLists();
+  }
   
   while(true) {
     let action = await startApp();
