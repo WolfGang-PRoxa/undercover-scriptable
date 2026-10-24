@@ -1027,16 +1027,32 @@ async function sendInitialSMS() {
   }
 }
 
+// Pour chaque joueur : on annonce d'abord à qui donner le téléphone, et le mot
+// n'apparaît qu'une fois que ce joueur a confirmé qu'il tient l'appareil.
 async function showOnScreen() {
   let as = appState.game.assignments;
   for (let i = 0; i < as.length; i++) {
-    let a = new Alert(); a.title = `${as[i].emoji} ${as[i].player.name}`;
-    a.message = buildMessage(as[i]); a.addAction(`J'ai lu ✓`); await a.presentAlert();
-    if (i < as.length - 1) {
-      let t = new Alert(); t.title = "🔄 Passez le téléphone"; t.message = `Au tour de : ${as[i+1].player.name}`;
-      t.addAction("Prêt !"); await t.presentAlert();
-    }
+    let name = as[i].player.name + (as[i].player.pseudo ? ` (${as[i].player.pseudo})` : "");
+
+    let t = new Alert();
+    t.title = `📱 Joueur ${i + 1}/${as.length}`;
+    t.message = `Passez le téléphone à :\n\n${name}\n\nLes autres joueurs ne doivent pas regarder l'écran.`;
+    t.addAction(`Je suis ${as[i].player.name}, voir mon mot`);
+    await t.presentAlert();
+
+    let a = new Alert();
+    a.title = `🤫 ${as[i].player.name}`;
+    a.message = buildMessage(as[i]);
+    a.addAction("J'ai lu ✓ (masquer)");
+    await a.presentAlert();
   }
+
+  let first = appState.game.assignments.find(x => x.player.phone === appState.game.turnOrder[0]);
+  let end = new Alert();
+  end.title = "✅ Distribution terminée";
+  end.message = `Rendez le téléphone au maître du jeu.\n\n${first.player.pseudo || first.player.name} commence la manche 1.`;
+  end.addAction("Commencer la partie");
+  await end.presentAlert();
 }
 
 // ─────────────────────────────────────────────

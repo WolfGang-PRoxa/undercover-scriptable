@@ -1026,16 +1026,32 @@ async function sendInitialSMS() {
   }
 }
 
+// For each player: first announce who to hand the phone to, and only reveal
+// the word once that player has confirmed they are holding the device.
 async function showOnScreen() {
   let as = appState.game.assignments;
   for (let i = 0; i < as.length; i++) {
-    let a = new Alert(); a.title = `${as[i].emoji} ${as[i].player.name}`;
-    a.message = buildMessage(as[i]); a.addAction(`I read it ✓`); await a.presentAlert();
-    if (i < as.length - 1) {
-      let t = new Alert(); t.title = "🔄 Pass the phone"; t.message = `Turn of: ${as[i+1].player.name}`;
-      t.addAction("Ready!"); await t.presentAlert();
-    }
+    let name = as[i].player.name + (as[i].player.pseudo ? ` (${as[i].player.pseudo})` : "");
+
+    let t = new Alert();
+    t.title = `📱 Player ${i + 1}/${as.length}`;
+    t.message = `Hand the phone to:\n\n${name}\n\nOther players must not look at the screen.`;
+    t.addAction(`I am ${as[i].player.name}, show my word`);
+    await t.presentAlert();
+
+    let a = new Alert();
+    a.title = `🤫 ${as[i].player.name}`;
+    a.message = buildMessage(as[i]);
+    a.addAction("I read it ✓ (hide)");
+    await a.presentAlert();
   }
+
+  let first = appState.game.assignments.find(x => x.player.phone === appState.game.turnOrder[0]);
+  let end = new Alert();
+  end.title = "✅ Distribution complete";
+  end.message = `Give the phone back to the game master.\n\n${first.player.pseudo || first.player.name} starts round 1.`;
+  end.addAction("Start the game");
+  await end.presentAlert();
 }
 
 // ─────────────────────────────────────────────
