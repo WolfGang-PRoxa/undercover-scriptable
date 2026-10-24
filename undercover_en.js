@@ -701,7 +701,12 @@ async function startApp() {
         let n = validPlayers.length;
         let effInfil = appState.game.nbInfil === -1 ? Math.ceil(n * 0.25) : appState.game.nbInfil;
         let effMW = appState.game.nbMW;
-        let isValid = n >= 3 && (effInfil > 0 || effMW > 0) && (n - effInfil - effMW > 0);
+        let nbCivils = n - effInfil - effMW;
+        let invalidReason = n < 3 ? "Select at least 3 players"
+          : effInfil + effMW === 0 ? "At least 1 Undercover or Mr. White is required"
+          : nbCivils < 2 ? "At least 2 Civilians are required"
+          : null;
+        let isValid = invalidReason === null;
 
         addHeader("New Game", `${n} selected | Civilians: ${Math.max(0, n - effInfil - effMW)} | Und: ${effInfil} | MW: ${effMW}`);
         addRow("◀", "Back to menu", "", Color.orange(), () => { appState.view = "main"; render(); });
@@ -710,7 +715,7 @@ async function startApp() {
           appState.prevView = "config"; appState.view = "advanced"; render();
         });
 
-        addRow("🚀", "START GAME", isValid ? "Click to start" : "Select at least 3 players", isValid ? Color.blue() : Color.gray(), () => {
+        addRow("🚀", "START GAME", isValid ? "Click to start" : invalidReason, isValid ? Color.blue() : Color.gray(), () => {
           if (isValid) resolve("launch");
         }, isValid);
 
@@ -718,7 +723,7 @@ async function startApp() {
           let a = new Alert(); a.title = "Number of Undercovers"; a.addTextField("E.g., 1", String(effInfil));
           a.addAction("Force value"); a.addAction("Set to Auto"); a.addCancelAction("Cancel");
           let r = await a.presentAlert();
-          if (r === 0) appState.game.nbInfil = parseInt(a.textFieldValue(0)) || 0;
+          if (r === 0) appState.game.nbInfil = Math.max(0, parseInt(a.textFieldValue(0)) || 0);
           else if (r === 1) appState.game.nbInfil = -1;
           render();
         });
@@ -726,7 +731,7 @@ async function startApp() {
         addRow("👻", `Mr. White : ${effMW}`, "Click to edit", null, async () => {
           let a = new Alert(); a.title = "Number of Mr. White"; a.addTextField("E.g., 0", String(effMW));
           a.addAction("Confirm"); a.addCancelAction("Cancel");
-          if (await a.presentAlert() === 0) appState.game.nbMW = parseInt(a.textFieldValue(0)) || 0;
+          if (await a.presentAlert() === 0) appState.game.nbMW = Math.max(0, parseInt(a.textFieldValue(0)) || 0);
           render();
         });
 
@@ -920,7 +925,7 @@ async function launchGame() {
   appState.game.assignments = assignRoles(selectedPlayers, effInfil, effMW, pair);
   appState.game.alive = selectedPlayers.map(p => p.phone);
   appState.game.round = 1;
-  appState.game.turnOrder = shuffle(appState.game.alive);
+  appState.game.turnOrder = buildTurnOrder(appState.game.alive);
   appState.game.status = "playing";
   appState.game.winnerType = null;
   appState.game.mrWhiteAssign = null;
@@ -947,27 +952,24 @@ async function launchGame() {
   appState.view = "playing";
 }
 
+// Roles are drawn uniformly, then the distribution order is shuffled independently of the roles.
 function assignRoles(players, nbInfil, nbMW, pair) {
-  const n = players.length;
-  const shuffled = shuffle(players);
-  
-  const validMWSlots = []; for (let i = Math.floor(n / 2); i < n; i++) validMWSlots.push(i);
-  const mwPositions = new Set();
-  
-  if (nbMW >= validMWSlots.length) { for (let i = n - nbMW; i < n; i++) mwPositions.add(i < 0 ? 0 : i); } 
-  else { const slotPool = shuffle(validMWSlots); for (let i = 0; i < nbMW; i++) mwPositions.add(slotPool[i]); }
-
-  const remaining = []; for (let i = 0; i < n; i++) { if (!mwPositions.has(i)) remaining.push(i); }
-  const infilPositions = new Set(shuffle(remaining).slice(0, nbInfil));
-
-  const assignments = [];
-  for (let i = 0; i < n; i++) {
-    let role = mwPositions.has(i) ? "Mr. White" : infilPositions.has(i) ? "Undercover" : "Civilian";
+  const assignments = shuffle(players).map((player, i) => {
+    let role = i < nbMW ? "Mr. White" : i < nbMW + nbInfil ? "Undercover" : "Civilian";
     let word = role === "Mr. White" ? null : role === "Undercover" ? pair.undercover : pair.civil;
     let emoji = role === "Mr. White" ? "👻" : role === "Undercover" ? "🕵️" : "🙂";
-    assignments.push({ player: shuffled[i], role, word, emoji, orderIndex: i + 1 });
-  }
-  return assignments;
+    return { player, role, word, emoji };
+  });
+  return shuffle(assignments);
+}
+
+// Random speaking order; Mr. White never speaks first (official rule).
+function buildTurnOrder(phones) {
+  const order = shuffle(phones);
+  const isMW = phone => appState.game.assignments.find(a => a.player.phone === phone).role === "Mr. White";
+  const k = order.findIndex(phone => !isMW(phone));
+  if (k > 0) [order[0], order[k]] = [order[k], order[0]];
+  return order;
 }
 
 // ─────────────────────────────────────────────
@@ -1012,7 +1014,7 @@ async function executeElimination(killedPhone) {
   }
 
   appState.game.round++;
-  appState.game.turnOrder = shuffle(appState.game.alive);
+  appState.game.turnOrder = buildTurnOrder(appState.game.alive);
   logEvent(`Round ${appState.game.round} — speaking order: ${turnOrderLabel()}`);
   
   if (!DEBUG_MODE) await notifyElimination(killed);

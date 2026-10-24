@@ -4,7 +4,7 @@
 // Installation and update script for Undercover
 const scriptName = "Undercover_en";
 // Raw URL to the file on your GitHub repository (main branch)
-const url = "https://raw.githubusercontent.com/WolfGang-PRoxa/Undercover_scriptable/main/undercover_en.js";
+const url = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main/undercover_en.js";
 
 let req = new Request(url);
 let scriptCode = await req.loadString();
