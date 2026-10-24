@@ -20,6 +20,7 @@ const FOLDER_NAME   = "Undercover";
 const LISTS_FOLDER  = "lists";
 const FILE_PLAYERS  = "players.json";
 const FILE_CONFIG   = "config.json";
+const LOGS_FOLDER   = "logs";
 const APP_VERSION   = "1.0";
 const LANG          = "en";
 const REPO_RAW_URL  = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main";
@@ -115,6 +116,7 @@ let appState = {
 function getFM() { try { return FileManager.iCloud(); } catch (e) { return FileManager.local(); } }
 function rootPath() { return getFM().joinPath(getFM().documentsDirectory(), FOLDER_NAME); }
 function listsPath() { return getFM().joinPath(rootPath(), LISTS_FOLDER); }
+function logsPath() { return getFM().joinPath(rootPath(), LOGS_FOLDER); }
 function listFilePath(listName) { return getFM().joinPath(listsPath(), listName + ".json"); }
 function playersPath() { return getFM().joinPath(rootPath(), FILE_PLAYERS); }
 function configPath() { return getFM().joinPath(rootPath(), FILE_CONFIG); }
@@ -124,6 +126,7 @@ function ensureStorage() {
   const fm = getFM();
   if (!fm.fileExists(rootPath())) fm.createDirectory(rootPath(), true);
   if (!fm.fileExists(listsPath())) fm.createDirectory(listsPath(), true);
+  if (!fm.fileExists(logsPath())) fm.createDirectory(logsPath(), true);
   if (!fm.fileExists(playersPath())) writeJSON(playersPath(), []);
   if (!fm.fileExists(configPath())) saveConfig();
 }
@@ -131,7 +134,7 @@ function ensureStorage() {
 // iCloud files may be evicted from the device: download them before any synchronous read.
 async function prefetchStorage() {
   const fm = getFM();
-  for (const dir of [rootPath(), listsPath()]) {
+  for (const dir of [rootPath(), listsPath(), logsPath()]) {
     let files = [];
     try { files = fm.listContents(dir); } catch (e) {}
     for (const f of files) {
@@ -278,6 +281,71 @@ function listStatus(pool) {
 }
 
 // ─────────────────────────────────────────────
+//  GAME LOGS
+// ─────────────────────────────────────────────
+
+// Each game produces a readable text file in Undercover/logs/,
+// reachable from the Files app (see logsLocation()).
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function storageLabel() { try { FileManager.iCloud(); return "iCloud Drive"; } catch (e) { return "On My iPhone"; } }
+function logsLocation() { return `Files > ${storageLabel()} > Scriptable > ${FOLDER_NAME} > ${LOGS_FOLDER}`; }
+function playerLabel(p) { return p.pseudo ? `${p.name} (${p.pseudo})` : p.name; }
+function turnOrderLabel() {
+  return appState.game.turnOrder.map(phone => playerLabel(appState.game.assignments.find(a => a.player.phone === phone).player)).join(", ");
+}
+
+function writeGameLog() {
+  const log = appState.game.log;
+  if (log) try { getFM().writeString(log.path, log.lines.join("\n") + "\n"); } catch (e) {}
+}
+
+function logEvent(text) {
+  const log = appState.game.log;
+  if (!log) return;
+  log.lines.push(`[${formatDate(new Date()).slice(11)}] ${text}`);
+  writeGameLog();
+}
+
+function startGameLog() {
+  const g = appState.game, pair = g.pair, now = new Date();
+  const methods = { sms: "SMS", screen: "On this screen", debug: "Debug mode (nothing sent)" };
+  const lines = [
+    "UNDERCOVER — Game log",
+    `Date: ${formatDate(now)}`,
+    `Version: ${APP_VERSION}`,
+    `Word list: ${pair.listLabel} (${pair.remaining}/${pair.total} groups left after this draw)`,
+    `Drawn group: ${pair.words.join(", ")}`,
+    `Civilians' word: ${pair.civil}`,
+    `Undercovers' word: ${pair.undercover}`,
+    `Distribution: ${methods[g.method]}`,
+    "",
+    `Players (${g.assignments.length}):`,
+    ...g.assignments.map(a => `  - ${playerLabel(a.player)} → ${a.role} [${a.word || "no word"}]`),
+    "",
+    "Timeline:",
+  ];
+  const stamp = formatDate(now).replace(" ", "_").replace(/:/g, "-");
+  g.log = { path: getFM().joinPath(logsPath(), `game_${stamp}.txt`), lines };
+  logEvent(`Round 1 — speaking order: ${turnOrderLabel()}`);
+}
+
+function endGameLog(text, summary = []) {
+  const log = appState.game.log;
+  if (!log) return;
+  logEvent(text);
+  log.lines.push(...summary);
+  writeGameLog();
+  appState.game.log = null;
+}
+
+function getGameLogs() {
+  const fm = getFM();
+  try { return fm.listContents(logsPath()).filter(f => f.endsWith(".txt")).sort().reverse(); } catch (e) { return []; }
+}
+
+// ─────────────────────────────────────────────
 //  UTILITIES
 // ─────────────────────────────────────────────
 
@@ -359,6 +427,7 @@ async function startApp() {
         addRow("👥", "Manage players", `${appState.players.length} registered`, null, () => { appState.view = "players"; render(); });
         addRow("🏆", "Leaderboard & Scores", "Player statistics", Color.orange(), () => { appState.view = "stats"; render(); });
         addRow("📖", "Game Rules", "How to play and win", null, () => { appState.view = "rules"; render(); });
+        addRow("📜", "Game history", `${getGameLogs().length} game(s) recorded`, null, () => { appState.view = "logs"; render(); });
         addRow("⚙️", "Advanced settings", "Words, display...", null, () => { appState.prevView = "main"; appState.view = "advanced"; render(); });
         
         addRow("🐛", "Debug Mode", DEBUG_MODE ? "🟢 ON (Test)" : "⚪ OFF", DEBUG_MODE ? Color.orange() : Color.gray(), () => { DEBUG_MODE = !DEBUG_MODE; saveConfig(); render(); });
@@ -411,6 +480,31 @@ async function startApp() {
         addSection("Turn Sequence", "1. Each player takes turns saying a word related to their secret word.\n2. Once all players have spoken, a debate begins to identify the intruder.\n3. After the debate, the group votes and eliminates one participant. Their role is then revealed.");
         addSection("Roles and Strategy", "Civilian: Find the intruders without using clues that are too obvious, which would help Mr. White.\nUndercover: Blend in with the crowd by deducing the general theme of the Civilians' word.\nMr. White: You have no word. Observe, bluff, and try to discover the Civilians' word.");
         addSection("Victory Conditions", "Civilians: They eliminate all Undercovers and Mr. White.\nUndercovers: They survive until only one Civilian remains.\nMr. White: He survives until the end, OR he is eliminated but manages to guess the exact word of the Civilians.");
+      }
+
+      // ─────────────────────────────────────────────
+      // VIEW : GAME HISTORY
+      else if (appState.view === "logs") {
+        let logs = getGameLogs();
+        addHeader("📜 History", `${logs.length} game(s) recorded`);
+        addRow("◀", "Back", "", Color.blue(), () => { appState.view = "main"; render(); });
+        addRow("📂", "Logs location", logsLocation(), Color.gray());
+
+        logs.slice(0, 50).forEach(f => {
+          let content = "";
+          try { content = getFM().readString(getFM().joinPath(logsPath(), f)); } catch (e) {}
+          let result = (content.match(/^RESULT: (.*)$/m) || [])[1] || "Game not finished";
+          let date = f.replace(/^game_/, "").replace(".txt", "").replace("_", " at ").replace(/-(\d\d)-(\d\d)$/, ":$1:$2");
+          addRow("🗒️", date, result, null, async () => { await QuickLook.present(content, true); });
+        });
+
+        if (logs.length > 0) {
+          addRow("🗑️", "Clear history", "Deletes every log", Color.red(), async () => {
+            let a = new Alert(); a.title = "Clear history?"; a.message = `${logs.length} log(s) will be deleted.`;
+            a.addDestructiveAction("Clear"); a.addCancelAction("Cancel");
+            if (await a.presentAlert() === 0) { logs.forEach(f => getFM().remove(getFM().joinPath(logsPath(), f))); render(); }
+          });
+        }
       }
 
       // ─────────────────────────────────────────────
@@ -737,7 +831,10 @@ async function startApp() {
           
           addRow("🛑", "Quit game", "Return to menu", Color.red(), async () => {
             let a = new Alert(); a.title = "Quit the game?"; a.message = "Progress will be lost."; a.addAction("Quit"); a.addCancelAction("Cancel");
-            if (await a.presentAlert() === 0) { appState.view = "main"; render(); }
+            if (await a.presentAlert() === 0) {
+              endGameLog(`Game abandoned during round ${appState.game.round}`);
+              appState.view = "main"; render();
+            }
           });
 
           let orderCell = new UITableRow();
@@ -829,20 +926,24 @@ async function launchGame() {
   appState.game.mrWhiteAssign = null;
   
   if (DEBUG_MODE) {
+    appState.game.method = "debug";
+    startGameLog();
     let lines = appState.game.assignments.map(a => `${a.emoji} ${a.player.name} → ${a.role} [${a.word || "—"}]`);
     let a = new Alert(); a.title = "🐛 DEBUG (No sending)"; a.message = lines.join("\n"); a.addAction("OK"); await a.presentAlert();
     appState.view = "playing";
     return;
   }
-  
+
   let a = new Alert(); a.title = "📤 Starting";
   a.addAction("📱 Via SMS"); a.addAction("📋 On this screen");
   let c = await a.presentAlert();
   appState.game.method = c === 0 ? "sms" : "screen";
-  
+  startGameLog();
+
   if (c === 0) await sendInitialSMS();
   else await showOnScreen();
-  
+  logEvent("Word distribution complete");
+
   appState.view = "playing";
 }
 
@@ -878,14 +979,17 @@ async function executeElimination(killedPhone) {
   if (!killed) return;
   
   appState.game.alive = appState.game.alive.filter(phone => phone !== killed.player.phone);
-  
+  logEvent(`Round ${appState.game.round}: ${playerLabel(killed.player)} is eliminated — ${killed.role}`);
+
   if (killed.role === "Mr. White") {
     let mwAlert = new Alert();
     mwAlert.title = "👻 Mr. White is eliminated!";
     mwAlert.message = "Did he guess the Civilians' word?";
     mwAlert.addAction("Yes (Mr. White Wins)");
     mwAlert.addAction("No (He dies)");
-    if (await mwAlert.presentAlert() === 0) {
+    let guessed = await mwAlert.presentAlert() === 0;
+    logEvent(`Mr. White ${guessed ? "guessed" : "did not guess"} the Civilians' word`);
+    if (guessed) {
       computeEndGameStats("mrwhite", killed);
       return;
     }
@@ -909,6 +1013,7 @@ async function executeElimination(killedPhone) {
 
   appState.game.round++;
   appState.game.turnOrder = shuffle(appState.game.alive);
+  logEvent(`Round ${appState.game.round} — speaking order: ${turnOrderLabel()}`);
   
   if (!DEBUG_MODE) await notifyElimination(killed);
 }
@@ -979,6 +1084,15 @@ function computeEndGameStats(winnerType, mrWhiteAssign = null) {
   }
 
   savePlayers();
+
+  const results = { civils: "Civilians win", infiltres: "Undercovers / Mr. White win", mrwhite: "Mr. White wins (word guessed)" };
+  const points = { civils: { "Civilian": 2 }, infiltres: { "Undercover": 10, "Mr. White": 6 }, mrwhite: {} }[winnerType];
+  const scored = appState.game.assignments
+    .map(a => ({ a, pts: winnerType === "mrwhite" ? (a === mrWhiteAssign ? 6 : 0) : (points[a.role] || 0) }))
+    .filter(x => x.pts > 0)
+    .map(x => `${playerLabel(x.a.player)} +${x.pts}`);
+  const survivors = appState.game.assignments.filter(a => appState.game.alive.includes(a.player.phone)).map(a => playerLabel(a.player));
+  endGameLog(`Game over after ${appState.game.round} round(s)`, ["", `RESULT: ${results[winnerType]}`, `Survivors: ${survivors.join(", ") || "none"}`, `Points: ${scored.join(", ") || "none"}`]);
 }
 
 async function showEndGameSummary() {
@@ -1021,8 +1135,9 @@ async function sendInitialSMS() {
     let a = new Alert(); a.title = `📤 Initial SMS ${i + 1}/${as.length}`; a.message = `Recipient: ${as[i].player.name}`;
     a.addAction("Open Messages"); a.addAction("Skip"); a.addCancelAction("Stop");
     let c = await a.presentAlert();
-    if (c === -1) break;
+    if (c === -1) { logEvent("SMS sending stopped"); break; }
     if (c === 0) { Safari.openInApp(`sms:${as[i].player.phone}&body=${encodeURIComponent(buildMessage(as[i]))}`, false); await pause(1500); }
+    else logEvent(`SMS not sent to ${playerLabel(as[i].player)}`);
   }
 }
 
@@ -1071,7 +1186,10 @@ async function main() {
   
   while(true) {
     let action = await startApp();
-    if (action === "quit") break;
+    if (action === "quit") {
+      if (appState.view === "playing" && appState.game.status === "playing") endGameLog(`App closed during round ${appState.game.round}`);
+      break;
+    }
     if (action === "launch") await launchGame();
   }
 }

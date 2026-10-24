@@ -20,6 +20,7 @@ const FOLDER_NAME   = "Undercover";
 const LISTS_FOLDER  = "lists";
 const FILE_PLAYERS  = "players.json";
 const FILE_CONFIG   = "config.json";
+const LOGS_FOLDER   = "logs";
 const APP_VERSION   = "1.0";
 const LANG          = "fr";
 const REPO_RAW_URL  = "https://raw.githubusercontent.com/WolfGang-PRoxa/undercover-scriptable/main";
@@ -115,6 +116,7 @@ let appState = {
 function getFM() { try { return FileManager.iCloud(); } catch (e) { return FileManager.local(); } }
 function rootPath() { return getFM().joinPath(getFM().documentsDirectory(), FOLDER_NAME); }
 function listsPath() { return getFM().joinPath(rootPath(), LISTS_FOLDER); }
+function logsPath() { return getFM().joinPath(rootPath(), LOGS_FOLDER); }
 function listFilePath(listName) { return getFM().joinPath(listsPath(), listName + ".json"); }
 function playersPath() { return getFM().joinPath(rootPath(), FILE_PLAYERS); }
 function configPath() { return getFM().joinPath(rootPath(), FILE_CONFIG); }
@@ -124,6 +126,7 @@ function ensureStorage() {
   const fm = getFM();
   if (!fm.fileExists(rootPath())) fm.createDirectory(rootPath(), true);
   if (!fm.fileExists(listsPath())) fm.createDirectory(listsPath(), true);
+  if (!fm.fileExists(logsPath())) fm.createDirectory(logsPath(), true);
   if (!fm.fileExists(playersPath())) writeJSON(playersPath(), []);
   if (!fm.fileExists(configPath())) saveConfig();
 }
@@ -131,7 +134,7 @@ function ensureStorage() {
 // Les fichiers iCloud peuvent être déchargés de l'appareil : on les rapatrie avant toute lecture synchrone.
 async function prefetchStorage() {
   const fm = getFM();
-  for (const dir of [rootPath(), listsPath()]) {
+  for (const dir of [rootPath(), listsPath(), logsPath()]) {
     let files = [];
     try { files = fm.listContents(dir); } catch (e) {}
     for (const f of files) {
@@ -278,6 +281,71 @@ function listStatus(pool) {
 }
 
 // ─────────────────────────────────────────────
+//  JOURNAL DES PARTIES
+// ─────────────────────────────────────────────
+
+// Chaque partie produit un fichier texte lisible dans Undercover/logs/,
+// accessible depuis l'app Fichiers (voir logsLocation()).
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function formatDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function storageLabel() { try { FileManager.iCloud(); return "iCloud Drive"; } catch (e) { return "Sur mon iPhone"; } }
+function logsLocation() { return `Fichiers > ${storageLabel()} > Scriptable > ${FOLDER_NAME} > ${LOGS_FOLDER}`; }
+function playerLabel(p) { return p.pseudo ? `${p.name} (${p.pseudo})` : p.name; }
+function turnOrderLabel() {
+  return appState.game.turnOrder.map(phone => playerLabel(appState.game.assignments.find(a => a.player.phone === phone).player)).join(", ");
+}
+
+function writeGameLog() {
+  const log = appState.game.log;
+  if (log) try { getFM().writeString(log.path, log.lines.join("\n") + "\n"); } catch (e) {}
+}
+
+function logEvent(text) {
+  const log = appState.game.log;
+  if (!log) return;
+  log.lines.push(`[${formatDate(new Date()).slice(11)}] ${text}`);
+  writeGameLog();
+}
+
+function startGameLog() {
+  const g = appState.game, pair = g.pair, now = new Date();
+  const methods = { sms: "SMS", screen: "Sur cet écran", debug: "Mode Debug (aucun envoi)" };
+  const lines = [
+    "UNDERCOVER — Journal de partie",
+    `Date : ${formatDate(now)}`,
+    `Version : ${APP_VERSION}`,
+    `Liste de mots : ${pair.listLabel} (${pair.remaining}/${pair.total} groupes restants après ce tirage)`,
+    `Groupe tiré : ${pair.words.join(", ")}`,
+    `Mot des Civils : ${pair.civil}`,
+    `Mot des Infiltrés : ${pair.undercover}`,
+    `Distribution : ${methods[g.method]}`,
+    "",
+    `Joueurs (${g.assignments.length}) :`,
+    ...g.assignments.map(a => `  - ${playerLabel(a.player)} → ${a.role} [${a.word || "aucun mot"}]`),
+    "",
+    "Déroulement :",
+  ];
+  const stamp = formatDate(now).replace(" ", "_").replace(/:/g, "-");
+  g.log = { path: getFM().joinPath(logsPath(), `partie_${stamp}.txt`), lines };
+  logEvent(`Manche 1 — ordre de parole : ${turnOrderLabel()}`);
+}
+
+function endGameLog(text, summary = []) {
+  const log = appState.game.log;
+  if (!log) return;
+  logEvent(text);
+  log.lines.push(...summary);
+  writeGameLog();
+  appState.game.log = null;
+}
+
+function getGameLogs() {
+  const fm = getFM();
+  try { return fm.listContents(logsPath()).filter(f => f.endsWith(".txt")).sort().reverse(); } catch (e) { return []; }
+}
+
+// ─────────────────────────────────────────────
 //  UTILITAIRES
 // ─────────────────────────────────────────────
 
@@ -359,6 +427,7 @@ async function startApp() {
         addRow("👥", "Gérer les joueurs", `${appState.players.length} enregistré(s)`, null, () => { appState.view = "players"; render(); });
         addRow("🏆", "Classement & Scores", "Statistiques des joueurs", Color.orange(), () => { appState.view = "stats"; render(); });
         addRow("📖", "Règles du jeu", "Fonctionnement de la partie", null, () => { appState.view = "rules"; render(); });
+        addRow("📜", "Historique des parties", `${getGameLogs().length} partie(s) enregistrée(s)`, null, () => { appState.view = "logs"; render(); });
         addRow("⚙️", "Configuration avancée", "Mots, affichage...", null, () => { appState.prevView = "main"; appState.view = "advanced"; render(); });
         
         addRow("🐛", "Mode Debug", DEBUG_MODE ? "🟢 ON (Test)" : "⚪ OFF", DEBUG_MODE ? Color.orange() : Color.gray(), () => { DEBUG_MODE = !DEBUG_MODE; saveConfig(); render(); });
@@ -411,6 +480,31 @@ async function startApp() {
         addSection("Déroulement d'un tour", "1. À tour de rôle, chaque joueur énonce un mot en rapport avec son mot secret.\n2. Une fois que tous les joueurs ont parlé, un débat commence pour identifier l'intrus.\n3. À l'issue du débat, le groupe vote et élimine un participant. Son rôle est alors révélé.");
         addSection("Rôles et Stratégie", "Civil : Trouvez les intrus sans utiliser des indices trop évidents qui aideraient Mister White.\nInfiltré : Fondez-vous dans la masse en déduisant le thème général du mot des Civils.\nMister White : Vous n'avez aucun mot. Observez, bluffez et tentez de découvrir le mot des Civils.");
         addSection("Conditions de Victoire", "Civils : Ils éliminent tous les Infiltrés et Mister White.\nInfiltrés : Ils survivent jusqu'à ce qu'il ne reste qu'un seul Civil.\nMister White : Il survit jusqu'à la fin, OU il est éliminé mais parvient à deviner le mot exact des Civils.");
+      }
+
+      // ─────────────────────────────────────────────
+      // VUE : HISTORIQUE DES PARTIES
+      else if (appState.view === "logs") {
+        let logs = getGameLogs();
+        addHeader("📜 Historique", `${logs.length} partie(s) enregistrée(s)`);
+        addRow("◀", "Retour", "", Color.blue(), () => { appState.view = "main"; render(); });
+        addRow("📂", "Emplacement des journaux", logsLocation(), Color.gray());
+
+        logs.slice(0, 50).forEach(f => {
+          let content = "";
+          try { content = getFM().readString(getFM().joinPath(logsPath(), f)); } catch (e) {}
+          let result = (content.match(/^RÉSULTAT : (.*)$/m) || [])[1] || "Partie non terminée";
+          let date = f.replace(/^partie_/, "").replace(".txt", "").replace("_", " à ").replace(/-(\d\d)-(\d\d)$/, ":$1:$2");
+          addRow("🗒️", date, result, null, async () => { await QuickLook.present(content, true); });
+        });
+
+        if (logs.length > 0) {
+          addRow("🗑️", "Effacer l'historique", "Supprime tous les journaux", Color.red(), async () => {
+            let a = new Alert(); a.title = "Effacer l'historique ?"; a.message = `${logs.length} journal(aux) seront supprimés.`;
+            a.addDestructiveAction("Effacer"); a.addCancelAction("Annuler");
+            if (await a.presentAlert() === 0) { logs.forEach(f => getFM().remove(getFM().joinPath(logsPath(), f))); render(); }
+          });
+        }
       }
 
       // ─────────────────────────────────────────────
@@ -738,7 +832,10 @@ async function startApp() {
           
           addRow("🛑", "Quitter la partie", "Retour au menu", Color.red(), async () => {
             let a = new Alert(); a.title = "Quitter la partie ?"; a.message = "La progression sera perdue."; a.addAction("Quitter"); a.addCancelAction("Annuler");
-            if (await a.presentAlert() === 0) { appState.view = "main"; render(); }
+            if (await a.presentAlert() === 0) {
+              endGameLog(`Partie abandonnée pendant la manche ${appState.game.round}`);
+              appState.view = "main"; render();
+            }
           });
 
           let orderCell = new UITableRow();
@@ -830,20 +927,24 @@ async function launchGame() {
   appState.game.mrWhiteAssign = null;
   
   if (DEBUG_MODE) {
+    appState.game.method = "debug";
+    startGameLog();
     let lines = appState.game.assignments.map(a => `${a.emoji} ${a.player.name} → ${a.role} [${a.word || "—"}]`);
     let a = new Alert(); a.title = "🐛 DEBUG (Pas d'envoi)"; a.message = lines.join("\n"); a.addAction("OK"); await a.presentAlert();
     appState.view = "playing";
     return;
   }
-  
+
   let a = new Alert(); a.title = "📤 Démarrage";
   a.addAction("📱 Via SMS"); a.addAction("📋 Sur cet écran");
   let c = await a.presentAlert();
   appState.game.method = c === 0 ? "sms" : "screen";
-  
+  startGameLog();
+
   if (c === 0) await sendInitialSMS();
   else await showOnScreen();
-  
+  logEvent("Distribution des mots terminée");
+
   appState.view = "playing";
 }
 
@@ -879,14 +980,17 @@ async function executeElimination(killedPhone) {
   if (!killed) return;
   
   appState.game.alive = appState.game.alive.filter(phone => phone !== killed.player.phone);
-  
+  logEvent(`Manche ${appState.game.round} : ${playerLabel(killed.player)} est éliminé(e) — ${killed.role}`);
+
   if (killed.role === "Mister White") {
     let mwAlert = new Alert();
     mwAlert.title = "👻 Mr. White est éliminé !";
     mwAlert.message = "A-t-il deviné le mot des Civils ?";
     mwAlert.addAction("Oui (Victoire Mr. White)");
     mwAlert.addAction("Non (Il meurt)");
-    if (await mwAlert.presentAlert() === 0) {
+    let guessed = await mwAlert.presentAlert() === 0;
+    logEvent(`Mister White ${guessed ? "a deviné" : "n'a pas deviné"} le mot des Civils`);
+    if (guessed) {
       computeEndGameStats("mrwhite", killed);
       return;
     }
@@ -910,6 +1014,7 @@ async function executeElimination(killedPhone) {
 
   appState.game.round++;
   appState.game.turnOrder = shuffle(appState.game.alive);
+  logEvent(`Manche ${appState.game.round} — ordre de parole : ${turnOrderLabel()}`);
   
   if (!DEBUG_MODE) await notifyElimination(killed);
 }
@@ -980,6 +1085,15 @@ function computeEndGameStats(winnerType, mrWhiteAssign = null) {
   }
 
   savePlayers();
+
+  const results = { civils: "Victoire des Civils", infiltres: "Victoire des Infiltrés / Mister White", mrwhite: "Victoire de Mister White (mot deviné)" };
+  const points = { civils: { "Civil": 2 }, infiltres: { "Infiltré": 10, "Mister White": 6 }, mrwhite: {} }[winnerType];
+  const scored = appState.game.assignments
+    .map(a => ({ a, pts: winnerType === "mrwhite" ? (a === mrWhiteAssign ? 6 : 0) : (points[a.role] || 0) }))
+    .filter(x => x.pts > 0)
+    .map(x => `${playerLabel(x.a.player)} +${x.pts}`);
+  const survivors = appState.game.assignments.filter(a => appState.game.alive.includes(a.player.phone)).map(a => playerLabel(a.player));
+  endGameLog(`Fin de partie après ${appState.game.round} manche(s)`, ["", `RÉSULTAT : ${results[winnerType]}`, `Survivants : ${survivors.join(", ") || "aucun"}`, `Points : ${scored.join(", ") || "aucun"}`]);
 }
 
 async function showEndGameSummary() {
@@ -1022,8 +1136,9 @@ async function sendInitialSMS() {
     let a = new Alert(); a.title = `📤 SMS initial ${i + 1}/${as.length}`; a.message = `Destinataire : ${as[i].player.name}`;
     a.addAction("Ouvrir Messages"); a.addAction("Passer"); a.addCancelAction("Arrêter");
     let c = await a.presentAlert();
-    if (c === -1) break;
+    if (c === -1) { logEvent("Envoi des SMS interrompu"); break; }
     if (c === 0) { Safari.openInApp(`sms:${as[i].player.phone}&body=${encodeURIComponent(buildMessage(as[i]))}`, false); await pause(1500); }
+    else logEvent(`SMS non envoyé à ${playerLabel(as[i].player)}`);
   }
 }
 
@@ -1072,7 +1187,10 @@ async function main() {
   
   while(true) {
     let action = await startApp();
-    if (action === "quit") break;
+    if (action === "quit") {
+      if (appState.view === "playing" && appState.game.status === "playing") endGameLog(`Application fermée pendant la manche ${appState.game.round}`);
+      break;
+    }
     if (action === "launch") await launchGame();
   }
 }
